@@ -1,0 +1,40 @@
+/* Custom styles that Tailwind doesn't cover */
+
+/* Smooth transitions */
+.fade-enter {
+    opacity: 0;
+    transform: translateY(4px);
+}
+.fade-enter-active {
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Status indicator pulse */
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+.pulse-dot {
+    animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* API endpoint hover effect */
+.api-endpoint:hover {
+    transform: translateX(4px);
+    background-color: rgb(243 244 246);
+}
+
+/* Loading spinner */
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+.spinner {
+    animation: spin 1s linear infinite;
+}
+
+/* Sidebar transition */
+.sidebar-transition {
+    transition: transform 0.2s ease-in-out;
+}

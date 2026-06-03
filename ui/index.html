@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLI UI</title>
+    
+    <!-- React 18 from CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+        .api-endpoint:hover { transform: translateX(4px); background-color: rgb(243 244 246); }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, createContext, useContext } = React;
+
+        // ─── Context ────────────────────────────────────────────────
+        const AppContext = createContext(null);
+        const useApp = () => useContext(AppContext);
+
+        // ─── Hash Router ────────────────────────────────────────────
+        function useHashRoute(defaultRoute = 'dashboard') {
+            const [route, setRoute] = useState(() => {
+                const hash = window.location.hash.replace('#/', '').replace('#', '');
+                return hash || defaultRoute;
+            });
+
+            useEffect(() => {
+                const onHashChange = () => {
+                    const hash = window.location.hash.replace('#/', '').replace('#', '');
+                    setRoute(hash || defaultRoute);
+                };
+                window.addEventListener('hashchange', onHashChange);
+                return () => window.removeEventListener('hashchange', onHashChange);
+            }, [defaultRoute]);
+
+            const navigate = useCallback((newRoute) => {
+                window.location.hash = `/${newRoute}`;
+            }, []);
+
+            return [route, navigate];
+        }
+
+        // ─── Components ─────────────────────────────────────────────
+        function StatusCard({ title, value, icon, color = 'indigo' }) {
+            const colors = {
+                indigo: 'bg-indigo-100 text-indigo-600',
+                green: 'bg-green-100 text-green-600',
+                blue: 'bg-blue-100 text-blue-600',
+                purple: 'bg-purple-100 text-purple-600',
+            };
+            useEffect(() => { lucide.createIcons(); }, [value]);
+            return (
+                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm font-medium text-gray-500">{title}</p>
+                            <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+                        </div>
+                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${colors[color]}`}>
+                            <i data-lucide={icon} className="w-6 h-6"></i>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function Sidebar() {
+            const { sidebarOpen, setSidebarOpen, currentRoute, navigate } = useApp();
+            const navItems = [
+                { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
+                { id: 'settings', label: 'Settings', icon: 'settings' },
+            ];
+            return (
+                <>
+                    {sidebarOpen && (
+                        <div className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setSidebarOpen(false)} />
+                    )}
+                    <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+                        <div className="flex flex-col h-full">
+                            <div className="px-6 py-5 border-b border-gray-200">
+                                <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                    <i data-lucide="terminal" className="w-5 h-5 text-indigo-600"></i>
+                                    CLI UI
+                                </h1>
+                                <p className="text-xs text-gray-500 mt-1">Go + React</p>
+                            </div>
+                            <nav className="flex-1 px-4 py-4 space-y-1">
+                                {navItems.map(item => (
+                                    <button key={item.id} onClick={() => navigate(item.id)}
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${currentRoute === item.id ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}>
+                                        <i data-lucide={item.icon} className="w-5 h-5"></i>
+                                        {item.label}
+                                    </button>
+                                ))}
+                            </nav>
+                            <div className="px-4 py-4 border-t border-gray-200">
+                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                    <div className="w-2 h-2 rounded-full bg-green-500 pulse-dot"></div>
+                                    <span>Server Running</span>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
+                </>
+            );
+        }
+
+        // ─── Views ──────────────────────────────────────────────────
+        function DashboardView() {
+            const { status, refresh } = useApp();
+            const [lastResponse, setLastResponse] = useState(null);
+            const endpoints = [
+                { method: 'GET', path: '/api/status', description: 'Server status' },
+                { method: 'GET', path: '/api/health', description: 'Health check' },
+            ];
+            const uptime = status?.uptime?.split('.')[0] || '-';
+            const methodColor = m => ({ GET: 'bg-green-100 text-green-700', POST: 'bg-blue-100 text-blue-700' }[m] || 'bg-gray-100 text-gray-700');
+            const testEndpoint = async (path) => {
+                try { const r = await fetch(path); setLastResponse(await r.json()); }
+                catch (e) { setLastResponse({ error: e.message }); }
+            };
+            useEffect(() => { lucide.createIcons(); }, [status, lastResponse]);
+            return (
+                <div>
+                    <div className="mb-6">
+                        <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
+                        <p className="text-gray-500 mt-1">Server status and overview</p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                        <StatusCard title="Status" value={status?.status || 'Unknown'} icon="activity" color="green" />
+                        <StatusCard title="Port" value={status?.port || '-'} icon="network" color="blue" />
+                        <StatusCard title="Uptime" value={uptime} icon="clock" color="purple" />
+                        <StatusCard title="Version" value={status?.version || '-'} icon="tag" color="indigo" />
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-200 p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold text-gray-900">API Endpoints</h3>
+                            <button onClick={refresh} className="text-sm text-indigo-600 hover:text-indigo-700 flex items-center gap-1">
+                                <i data-lucide="refresh-cw" className="w-4 h-4"></i> Refresh
+                            </button>
+                        </div>
+                        <div className="space-y-3">
+                            {endpoints.map(ep => (
+                                <div key={ep.path} onClick={() => testEndpoint(ep.path)} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 api-endpoint transition-all cursor-pointer">
+                                    <div className="flex items-center gap-3">
+                                        <span className={`px-2 py-1 text-xs font-mono font-bold rounded ${methodColor(ep.method)}`}>{ep.method}</span>
+                                        <span className="font-mono text-sm text-gray-700">{ep.path}</span>
+                                    </div>
+                                    <span className="text-sm text-gray-500">{ep.description}</span>
+                                </div>
+                            ))}
+                        </div>
+                        {lastResponse && (
+                            <div className="mt-4 p-4 rounded-lg bg-gray-900 text-green-400 font-mono text-sm overflow-x-auto">
+                                <pre>{JSON.stringify(lastResponse, null, 2)}</pre>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        function SettingsView() {
+            const [settings, setSettings] = useState({ theme: 'light', accentColor: '#6366f1', refreshInterval: 10, autoRefresh: true });
+            const [saveMessage, setSaveMessage] = useState('');
+            const accentColors = ['#6366f1', '#8b5cf6', '#ec4899', '#10b981', '#3b82f6', '#f59e0b'];
+            useEffect(() => { const s = localStorage.getItem('cli-ui-settings'); if (s) setSettings(JSON.parse(s)); }, []);
+            const update = (k, v) => setSettings(p => ({ ...p, [k]: v }));
+            const save = () => { localStorage.setItem('cli-ui-settings', JSON.stringify(settings)); setSaveMessage('Saved!'); setTimeout(() => setSaveMessage(''), 2000); };
+            return (
+                <div>
+                    <div className="mb-6">
+                        <h2 className="text-2xl font-bold text-gray-900">Settings</h2>
+                        <p className="text-gray-500 mt-1">Configure your CLI UI</p>
+                    </div>
+                    <div className="space-y-6">
+                        <div className="bg-white rounded-xl border border-gray-200 p-6">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-4">Appearance</h3>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Theme</label>
+                                    <select value={settings.theme} onChange={e => update('theme', e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                        <option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Accent Color</label>
+                                    <div className="flex gap-2">
+                                        {accentColors.map(c => (
+                                            <button key={c} onClick={() => update('accentColor', c)} style={{ backgroundColor: c }}
+                                                className={`w-8 h-8 rounded-full transition-transform ${settings.accentColor === c ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : 'hover:scale-105'}`} />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="bg-white rounded-xl border border-gray-200 p-6">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-4">API Configuration</h3>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Refresh Interval (seconds)</label>
+                                    <input type="number" min="1" max="60" value={settings.refreshInterval} onChange={e => update('refreshInterval', parseInt(e.target.value) || 10)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">Auto-refresh</label>
+                                        <p className="text-xs text-gray-500">Automatically refresh status</p>
+                                    </div>
+                                    <button onClick={() => update('autoRefresh', !settings.autoRefresh)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${settings.autoRefresh ? 'bg-indigo-600' : 'bg-gray-200'}`}>
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.autoRefresh ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex justify-end items-center gap-4">
+                            {saveMessage && <span className="text-sm text-green-600">{saveMessage}</span>}
+                            <button onClick={save} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium">Save Settings</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ─── App ────────────────────────────────────────────────────
+        function App() {
+            const [sidebarOpen, setSidebarOpen] = useState(false);
+            const [currentRoute, navigate] = useHashRoute('dashboard');
+            const [status, setStatus] = useState(null);
+
+            const fetchStatus = useCallback(async () => {
+                try { const r = await fetch('/api/status'); setStatus(await r.json()); } catch(e) {}
+            }, []);
+
+            useEffect(() => { fetchStatus(); const i = setInterval(fetchStatus, 10000); return () => clearInterval(i); }, [fetchStatus]);
+            useEffect(() => { lucide.createIcons(); }, [currentRoute, sidebarOpen]);
+
+            return (
+                <AppContext.Provider value={{ sidebarOpen, setSidebarOpen, currentRoute, navigate, status, refresh: fetchStatus }}>
+                    <div className="min-h-screen flex">
+                        <Sidebar />
+                        <div className="flex-1 flex flex-col">
+                            <header className="lg:hidden bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+                                <button onClick={() => setSidebarOpen(true)} className="text-gray-600 hover:text-gray-900">
+                                    <i data-lucide="menu" className="w-6 h-6"></i>
+                                </button>
+                                <span className="font-semibold text-gray-900">CLI UI</span>
+                                <div className="w-6"></div>
+                            </header>
+                            <main className="flex-1 p-6 overflow-auto">
+                                {currentRoute === 'dashboard' && <DashboardView />}
+                                {currentRoute === 'settings' && <SettingsView />}
+                            </main>
+                        </div>
+                    </div>
+                </AppContext.Provider>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
