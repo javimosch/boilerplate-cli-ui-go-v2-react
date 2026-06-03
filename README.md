@@ -1,6 +1,8 @@
 # boilerplate-cli-ui-go-v2-react
 
-Go CLI with embedded React web UI. Single binary, no runtime dependencies.
+Go CLI with embedded React 18 web UI. Single binary, no runtime dependencies.
+
+**Vue version**: [boilerplate-cli-ui-go-v2](https://github.com/javimosch/boilerplate-cli-ui-go-v2)
 
 ## Architecture
 
