@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
+	"net"
 	"net/http"
-	"path/filepath"
+	"os"
 	"sync"
 	"time"
 )
@@ -16,51 +16,138 @@ import (
 var uiFiles embed.FS
 
 var (
-	server *http.Server
-	mu     sync.Mutex
+	server    *http.Server
+	mu        sync.Mutex
+	boundHost = "127.0.0.1"
 )
 
 type Status struct {
-	Status    string `json:"status"`
-	Port      int    `json:"port"`
-	Uptime    string `json:"uptime"`
-	Version   string `json:"version"`
+	Status    string    `json:"status"`
+	Port      int       `json:"port"`
+	Uptime    string    `json:"uptime"`
+	Version   string    `json:"version"`
 	StartTime time.Time `json:"start_time"`
 }
 
 var serverStatus Status
 
-func startServer(port int) {
+func startServer(host string, port int) {
 	serverStatus = Status{
 		Status:    "running",
 		Port:      port,
 		Version:   Version,
 		StartTime: time.Now(),
 	}
+	boundHost = host
 
 	mux := http.NewServeMux()
 
-	// API endpoints (agent-first: JSON responses)
+	// Daemon lifecycle routes (cli-daemon-spec §2, §3).
+	mux.HandleFunc("/_health", handleHealth)
+	mux.HandleFunc("/_shutdown", handleShutdown)
+
+	// The guide over HTTP (cli-guide-spec §3).
+	mux.HandleFunc("/guide", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, guideJSON())
+	})
+	mux.HandleFunc("/llms.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, llmsTxt())
+	})
+
+	// App API (agent-first: JSON responses).
 	mux.HandleFunc("/api/status", handleStatusAPI)
-	mux.HandleFunc("/api/health", handleHealthAPI)
+	mux.HandleFunc("/api/health", handleHealth)
 
-	// Static UI files from embedded filesystem
+	// Static UI files from the embedded filesystem.
 	uiSub, _ := fs.Sub(uiFiles, "ui")
-	fileServer := http.FileServer(http.FS(uiSub))
-	mux.Handle("/", fileServer)
+	mux.Handle("/", http.FileServer(http.FS(uiSub)))
 
-	server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
-	}
+	// net.JoinHostPort, not ":port": the bare form binds every interface, so a
+	// server told to serve localhost would still be reachable from the whole
+	// network (cli-daemon-spec §1).
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	server = &http.Server{Addr: addr, Handler: mux}
 
-	log.Printf("Server starting on http://localhost:%d", port)
-	log.Printf("UI available at http://localhost:%d/", port)
-	log.Printf("API available at http://localhost:%d/api/status", port)
-	log.Printf("Press Ctrl+C to stop")
+	// Startup lines are context — stderr, never stdout (cli-daemon-spec §1).
+	fmt.Fprintf(os.Stderr, "boilerplate-cli-ui-go-v2-react serving on http://%s/\n", addr)
+	fmt.Fprintf(os.Stderr, "  API: http://%s/api/status\n", addr)
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server error: %v", err)
+		die(ExitPrecondition, "port_unavailable",
+			fmt.Sprintf("cannot bind %s: %v", addr, err),
+			fmt.Sprintf("boilerplate-cli-ui-go-v2-react serve --port %d", port+1))
+	}
+}
+
+// handleHealth is open and cheap: liveness only, no dependency checks (§2).
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"service": "boilerplate-cli-ui-go-v2-react",
+		"pid":     os.Getpid(),
+		"port":    serverStatus.Port,
+	})
+}
+
+// handleShutdown answers before exiting, and is token-gated whenever the server
+// is bound off-loopback — otherwise it is a remote kill switch (§3).
+func handleShutdown(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(errBody(ExitUnknownCommand, "method_not_allowed", "POST /_shutdown"))
+		return
+	}
+
+	if !shutdownAuthorized(r) {
+		// 403, and the process MUST NOT stop.
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(errBody(ExitPrecondition, "forbidden",
+			"X-Shutdown-Token required when bound off-loopback"))
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "stopping": true})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		os.Remove(pidFile)
+		os.Exit(ExitOK)
+	}()
+}
+
+func shutdownAuthorized(r *http.Request) bool {
+	if isLoopback(boundHost) {
+		return true
+	}
+	token := os.Getenv("SHUTDOWN_TOKEN")
+	return token != "" && r.Header.Get("X-Shutdown-Token") == token
+}
+
+func isLoopback(host string) bool {
+	switch host {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
+
+func errBody(code int, etype, message string) map[string]any {
+	return map[string]any{
+		"ok": false,
+		"error": map[string]any{
+			"code":        code,
+			"type":        etype,
+			"message":     message,
+			"recoverable": false,
+		},
 	}
 }
 
@@ -72,37 +159,4 @@ func handleStatusAPI(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(serverStatus)
-}
-
-func handleHealthAPI(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "healthy",
-		"version": Version,
-	})
-}
-
-// contentType returns the MIME type for a file path
-func contentType(path string) string {
-	ext := filepath.Ext(path)
-	switch ext {
-	case ".html":
-		return "text/html"
-	case ".css":
-		return "text/css"
-	case ".js":
-		return "application/javascript"
-	case ".json":
-		return "application/json"
-	case ".svg":
-		return "image/svg+xml"
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".ico":
-		return "image/x-icon"
-	default:
-		return "application/octet-stream"
-	}
 }

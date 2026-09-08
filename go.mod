@@ -1,3 +1,3 @@
-module boilerplate-cli-ui-go-v2
+module boilerplate-cli-ui-go-v2-react
 
 go 1.21
