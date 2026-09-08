@@ -4,7 +4,7 @@
 
 set -e
 
-APP_NAME="boilerplate-cli-ui-go-v2"
+APP_NAME="boilerplate-cli-ui-go-v2-react"
 
 echo "Building ${APP_NAME}..."
 
